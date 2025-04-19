@@ -15,7 +15,7 @@ This app utilizes the `yt_dlp` API to extract and download youtube videos into m
 ## Dependencies (for exe)
 - nothing
 
-## Dependencies (for code shit)
+## Dependencies (for source code)
 - yt_dlp
 - ttkbootstrap
 - tkinter
