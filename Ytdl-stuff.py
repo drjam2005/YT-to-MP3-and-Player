@@ -6,7 +6,6 @@ import os
 import pygame
 import yt_dlp
 from mutagen.mp3 import MP3
-from tkinter.simpledialog import askstring as askstring
 
 pygame.mixer.init()
 music = pygame.mixer.music
