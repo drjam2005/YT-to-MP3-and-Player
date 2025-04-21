@@ -1,10 +1,13 @@
 import os
 import sys
 import time
+import shutil
 import yt_dlp
+from math import ceil
 from mutagen.mp3 import MP3
-from PyQt5.QtCore import Qt, QUrl, QRunnable, QThreadPool, pyqtSlot, pyqtSignal, QObject
+from PyQt5.QtGui import QFont
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+from PyQt5.QtCore import Qt, QUrl, QRunnable, QThreadPool, pyqtSlot, pyqtSignal, QObject
 from PyQt5.QtWidgets import QApplication, QWidget, QDialog, QTextEdit, QLineEdit,  QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QComboBox, QListWidget, QSlider
 
 ydl_opts = {
@@ -51,6 +54,7 @@ class AddSongsWidget(QDialog):
         self.close()
 
 class DownloadSignals(QObject):
+    starting = pyqtSignal()
     progress = pyqtSignal(int)
     finished = pyqtSignal(int)
     error = pyqtSignal(str)
@@ -71,6 +75,7 @@ class DownloadSongs(QRunnable):
         ydl_copyOpts['outtmpl'] = downloadPath + "\\" + "%(title)s.%(ext)s"
         
         indx = 1
+        self.signals.starting.emit()
         for link in links:
             with yt_dlp.YoutubeDL(ydl_copyOpts) as ydl:
                 try:
@@ -124,19 +129,50 @@ class DeleteDialog(QDialog):
         self.resize(200,150)
         self.args = args
         self.kwargs = kwargs
+        self.delete = None
+
+        name = self.args[1]
+        type = self.args[0]
+
+        self.Layout = QVBoxLayout()
+        self.HLayout = QHBoxLayout()
+        self.label = QLabel(f"Are you sure you want to delete")
+        self.label2 = QLabel(f"{type}: {name}?")
+        self.label2.setFont(QFont('Trebuchet MS', 10))
+        self.confirmButton = QPushButton("Yes")
+        self.confirmButton.clicked.connect(self.push)
+        self.cancelButton = QPushButton("No")
+        self.cancelButton.clicked.connect(self.push)
+
+        self.HLayout.addWidget(self.confirmButton)
+        self.HLayout.addWidget(self.cancelButton)
+
+        self.Layout.addWidget(self.label)
+        self.Layout.addWidget(self.label2)
+        self.Layout.addLayout(self.HLayout)
         
-        print(self.args[0], self.args[1])
+        self.setLayout(self.Layout)
+
+    def push(self):
+        if self.sender().text() == "Yes":
+            self.delete = True
+        self.close()
 
 class MainWidget(QWidget):
     def __init__(self, args):
         super().__init__()
         self.resize(500,400)
         self.setWindowTitle("shit")
-        self.setLayouts()
         self.songPlayer = QMediaPlayer()
-        self.loadedSong = None
+        self.currentMSeconds = 0
         self.isPlaying = False
+        self.isLoop = False
+        self.loadedSong = None
         self.songLength = None
+        self.songLengthParsed = ""
+        self.chosenSong = ""
+        self.chosenPlaylist = ""
+        self.setLayouts()
    
         
     def setWidgets(self):
@@ -161,6 +197,7 @@ class MainWidget(QWidget):
         self.prevSong = QPushButton("<")
         self.togglePlayback = QPushButton("||")
         self.nextSong = QPushButton(">")
+        self.loop = QPushButton("Loop [X]")
 
         # setup
         self.topLeftVbox.addWidget(self.choosePlaylist, 10)
@@ -179,7 +216,9 @@ class MainWidget(QWidget):
         self.playButtons.addWidget(self.prevSong)
         self.playButtons.addWidget(self.togglePlayback)
         self.playButtons.addWidget(self.nextSong)
+        self.playButtons.addWidget(self.loop)
         self.playButtons.addWidget(self.blank)
+
 
         self.lowVbox.addWidget(self.Playing)
         self.lowVbox.addWidget(self.musicSlider)
@@ -209,26 +248,96 @@ class MainWidget(QWidget):
     
     
     def setEvents(self):
-        self.choosePlaylist.currentTextChanged.connect(self.choose_playlist)
+        self.choosePlaylist.currentTextChanged.connect(lambda chosen: self.update_song_list(chosen))
+        self.playlistView.currentTextChanged.connect(lambda s: self.handleChoose(s))
+
         self.createPlaylist.clicked.connect(self.create_playlist)
         self.addSong.clicked.connect(self.add_song)
         
         self.deletePlaylist.clicked.connect(lambda: self.delete_item("playlist"))
         self.deleteSong.clicked.connect(lambda: self.delete_item("song"))
         
-        self.prevSong.clicked.connect(lambda: print("pass"))
+        self.prevSong.clicked.connect(lambda: self.iterateSong(user=-1))
         self.togglePlayback.clicked.connect(self.toggle_play_song)
-        self.nextSong.clicked.connect(lambda: print("pass"))
+        self.nextSong.clicked.connect(lambda: self.iterateSong(user=1))
+        self.loop.clicked.connect(self.toggleLoop)
+
+        self.songPlayer.positionChanged.connect(lambda val: self.updateSlider(val))
+        self.songPlayer.mediaStatusChanged.connect(lambda status: self.iterateSong(status=status))
+
+        self.musicSlider.sliderReleased.connect(self.seekSlider)
     
+    def handleChoose(self, str):
+        self.chosenSong = str
+
+    def iterateSong(self, status=None, user=0):
+        if status == 2:
+            return
+        if not bool(user) and self.isLoop and not self.isPlaying:
+            self.updateSlider(0)
+            self.songPlayer.play()
+            return
+        if not self.isPlaying:
+            return
+        playlistPath = os.path.join("playlists", self.choosePlaylist.currentText())
+        songList = [song for song in os.listdir(playlistPath) if song.endswith(".mp3")]
+        if self.chosenSong == "":
+            self.chosenSong = songList[0]
+        playlistSize = len(songList)
+        currentIndex = songList.index(self.chosenSong)
+
+        setRow = currentIndex
+        if user:
+            if playlistSize <= 1:
+                return
+            elif currentIndex+1 == playlistSize:
+                if user == 1:
+                    setRow = 0
+                elif user == -1:
+                    setRow = setRow-1
+            elif currentIndex == 0:
+                if user == 1:
+                    setRow = setRow+1
+                elif user == -1:
+                    setRow = playlistSize-1
+            else:
+                setRow = setRow+user
+            self.chosenSong = songList[setRow]
+            
+
+        songUrl = os.path.join(playlistPath, self.chosenSong)
+
+        self.playlistView.setCurrentRow(setRow)
+        self.songLength = MP3(songUrl).info.length
+        self.musicSlider.setMaximum(int(self.songLength*1000))
+
+        minutes = int(self.songLength / 60)
+        seconds = int(self.songLength) - (minutes*60)
+
+        self.songLengthParsed = f"{minutes}:{seconds:02d}"
+        self.timePlaying.setText("0:00 / " + self.songLengthParsed)
+
+        self.loadedSong = QUrl.fromLocalFile(songUrl)
+        self.songPlayer.stop()
+        self.songPlayer.setMedia(QMediaContent(self.loadedSong))
+        self.songPlayer.play()
+        
+
+    def toggleLoop(self):
+        self.isLoop = not self.isLoop
+        if self.isLoop:
+            self.loop.setText("Loop [✓]")
+        else:
+            self.loop.setText("Loop [X]")
     
     def toggle_play_song(self):
         self.warningLabel.setText("")
         try:
-            chosenPlaylist = self.choosePlaylist.currentText()
-            chosenSong = self.playlistView.currentItem().text()
-            songUrl = os.path.join("playlists", chosenPlaylist, chosenSong)
+            self.chosenPlaylist = self.choosePlaylist.currentText()
+            self.chosenSong = self.playlistView.currentItem().text()
+            songUrl = os.path.join("playlists", self.chosenPlaylist, self.chosenSong)
         except:
-            self.warningLabel.setText("bruh")
+            self.warningLabel.setText("Please choose a song!")
             return
         
         if not os.path.exists(songUrl):
@@ -236,19 +345,47 @@ class MainWidget(QWidget):
             return
         
         if self.loadedSong is None or (self.loadedSong != QUrl.fromLocalFile(songUrl)):
+            self.songLength = MP3(songUrl).info.length
+            self.musicSlider.setMaximum(int(self.songLength*1000))
+
+            minutes = int(self.songLength / 60)
+            seconds = int(self.songLength) - (minutes*60)
+
+            self.songLengthParsed = f"{minutes}:{seconds:02d}"
+            self.timePlaying.setText("0:00 / " + self.songLengthParsed)
+
+            self.musicSlider.setValue(0)
             self.loadedSong = QUrl.fromLocalFile(songUrl)
             self.songPlayer.setMedia(QMediaContent(self.loadedSong))
 
         if not self.isPlaying:
             self.songPlayer.play()
-            self.Playing.setText(f"Playing: {chosenSong.removesuffix(".mp3")}")
+            self.Playing.setText(f"Playing: {self.chosenSong.removesuffix(".mp3")}")
             self.togglePlayback.setText("|>")
         elif self.isPlaying:
             self.songPlayer.pause()
+            self.Playing.setText(f"Paused: {self.chosenSong.removesuffix(".mp3")}")
             self.togglePlayback.setText("||")
             
         self.isPlaying = not self.isPlaying
              
+    def updateSlider(self, val=0):
+        self.currentMSeconds = val
+        self.musicSlider.setValue(self.currentMSeconds)
+
+        minutes = int(int(self.currentMSeconds/1000) / 60)
+        seconds = round((self.currentMSeconds/1000) - (minutes * 60))
+
+        liveTime = f" {minutes}:{seconds:02d} / {self.songLengthParsed}"
+        self.timePlaying.setText(liveTime)
+        
+    def seekSlider(self):
+        if not self.isPlaying:
+            return
+        seeked = self.musicSlider.value()
+        self.songPlayer.pause()
+        self.songPlayer.setPosition(seeked)
+        self.songPlayer.play()
              
     def create_playlist(self):
         self.CreatePlaylistWindow = CreatePlaylistWidget([])
@@ -263,11 +400,6 @@ class MainWidget(QWidget):
             self.update_playlists()
             self.choosePlaylist.setCurrentText(playlist_name)
     
-    
-    def choose_playlist(self):
-        playlist = self.choosePlaylist.currentText()
-        self.update_song_list(playlist)
-        
         
     def add_song(self):
         currentPlaylist = self.choosePlaylist.currentText()
@@ -275,12 +407,14 @@ class MainWidget(QWidget):
         self.AddSongWindow = AddSongsWidget(currentPlaylist)
         self.AddSongWindow.exec()
         songs = self.AddSongWindow.songs.split('\n')
-        
+        if songs == ['']:
+            return
         self.threadpool = QThreadPool()
         worker = DownloadSongs(songs, fullpath)
         worker.signals.progress.connect(lambda val: self.updateWarning(val, songs))
         worker.signals.error.connect(lambda song: self.errorLabel.setText(f"Couldn't download\n\"{song}\""))
         worker.signals.finished.connect(self.finishWarning)
+        worker.signals.starting.connect(lambda: self.warningLabel.setText("Starting download/s..."))
         
         self.finished = False
         self.threadpool.start(worker)
@@ -295,12 +429,12 @@ class MainWidget(QWidget):
     def update_playlists(self):
         if not os.path.exists("playlists"):
             os.mkdir("playlists")
-            self.warningLabel("Please create a playlist!")
+            self.warningLabel.setText("Please create a playlist!")
             return
         playlists = [playlist for playlist in os.listdir("playlists") if os.path.isdir(os.path.join("playlists", playlist))]
         self.choosePlaylist.clear()
         self.choosePlaylist.addItems(playlists)
-        if playlists is not None:
+        if playlists != [] and playlists is not None:
             self.update_song_list(playlists[0])
 
     def update_song_list(self, playlist):
@@ -315,14 +449,25 @@ class MainWidget(QWidget):
             item = self.choosePlaylist.currentText()
         elif str == "song":
             try:
-                item = self.playlistView.currentItem().text()
+                playlist = self.choosePlaylist.currentText()
+                item = os.path.join(playlist, self.playlistView.currentItem().text())
             except AttributeError:
                 self.warningLabel.setText("Please choose a song!")
                 return
         deleteWindow = DeleteDialog(str, item)
-        deleteWindow.exec_()
+        deleteWindow.exec()
+        fullpath = os.path.join("playlists", item)
+        if deleteWindow.delete:
+            if os.path.isdir(fullpath):
+                shutil.rmtree(fullpath)
+            else:
+                os.remove(fullpath)
+        else:
+            return
         
-
+        self.update_playlists()
+        
+        
 
 def main():
     app = QApplication(sys.argv)
