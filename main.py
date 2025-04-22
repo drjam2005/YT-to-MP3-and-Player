@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 import shutil
 import yt_dlp
 from math import ceil
@@ -8,7 +7,7 @@ from mutagen.mp3 import MP3
 from PyQt5.QtGui import QFont
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtCore import Qt, QUrl, QRunnable, QThreadPool, pyqtSlot, pyqtSignal, QObject
-from PyQt5.QtWidgets import QApplication, QWidget, QDialog, QTextEdit, QLineEdit,  QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QComboBox, QListWidget, QSlider
+from PyQt5.QtWidgets import QSpacerItem, QApplication, QWidget, QGridLayout, QDialog, QTextEdit, QLineEdit,  QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QComboBox, QListWidget, QSlider
 
 ydl_opts = {
     'format': 'mp3/bestaudio/best',
@@ -138,10 +137,11 @@ class DeleteDialog(QDialog):
         self.HLayout = QHBoxLayout()
         self.label = QLabel(f"Are you sure you want to delete")
         self.label2 = QLabel(f"{type}: {name}?")
-        self.label2.setFont(QFont('Trebuchet MS', 10))
         self.confirmButton = QPushButton("Yes")
-        self.confirmButton.clicked.connect(self.push)
         self.cancelButton = QPushButton("No")
+
+        self.label2.setFont(QFont('Trebuchet MS', 10))
+        self.confirmButton.clicked.connect(self.push)
         self.cancelButton.clicked.connect(self.push)
 
         self.HLayout.addWidget(self.confirmButton)
@@ -162,8 +162,12 @@ class MainWidget(QWidget):
     def __init__(self, args):
         super().__init__()
         self.resize(500,400)
+        self.setStyleSheet("QWidget{ background-color: #111;} QComboBox{color: #FFF; background-color:#444} QLabel{color: #FFF;} QPushButton{color: #FFF} QListView{color: #FFF} QPushButton{background-color: #444}")
+        self.setMaximumSize(500,400)
+        self.setMinimumSize(500,400)
         self.setWindowTitle("shit")
         self.songPlayer = QMediaPlayer()
+        self.songPlayer.setVolume(100)
         self.currentMSeconds = 0
         self.isPlaying = False
         self.isLoop = False
@@ -182,7 +186,7 @@ class MainWidget(QWidget):
         self.choosePlaylist = QComboBox()
         self.playlistView = QListWidget()
         # top right
-        self.blank = QLabel()
+        self.blank = QLabel("")
         self.createPlaylist = QPushButton("Create Playlist")
         self.addSong = QPushButton("Add Song/s")
         self.deletePlaylist = QPushButton("Delete Playlist")
@@ -192,10 +196,11 @@ class MainWidget(QWidget):
         
         # bottom
         self.Playing = QLabel("Playing: (song)")
+        self.volumeSlider = QSlider(orientation=Qt.Horizontal)
         self.musicSlider = QSlider(orientation=Qt.Horizontal)
         self.timePlaying = QLabel("X:XX / X:XX")
         self.prevSong = QPushButton("<")
-        self.togglePlayback = QPushButton("||")
+        self.togglePlayback = QPushButton("|>")
         self.nextSong = QPushButton(">")
         self.loop = QPushButton("Loop [X]")
 
@@ -219,8 +224,10 @@ class MainWidget(QWidget):
         self.playButtons.addWidget(self.loop)
         self.playButtons.addWidget(self.blank)
 
-
-        self.lowVbox.addWidget(self.Playing)
+        self.gridBox.addWidget(self.Playing, 0, 0)
+        self.gridBox.addWidget(self.blank, 0, 1)
+        self.gridBox.addWidget(self.volumeSlider, 0, 2)
+        self.lowVbox.addLayout(self.gridBox)
         self.lowVbox.addWidget(self.musicSlider)
         self.lowVbox.addLayout(self.playButtons)
         
@@ -238,6 +245,7 @@ class MainWidget(QWidget):
         self.topHbox.addLayout(self.topLeftVbox, 70)
         self.topHbox.addLayout(self.topRightVbox, 30)
 
+        self.gridBox = QGridLayout()
         self.lowVbox = QVBoxLayout()
         
         self.masterVbox.addLayout(self.topHbox, 70)
@@ -261,7 +269,10 @@ class MainWidget(QWidget):
         self.togglePlayback.clicked.connect(self.toggle_play_song)
         self.nextSong.clicked.connect(lambda: self.iterateSong(user=1))
         self.loop.clicked.connect(self.toggleLoop)
-
+        
+        
+        self.volumeSlider.setValue(100)
+        self.volumeSlider.sliderMoved.connect(lambda val: self.songPlayer.setVolume(val))
         self.songPlayer.positionChanged.connect(lambda val: self.updateSlider(val))
         self.songPlayer.mediaStatusChanged.connect(lambda status: self.iterateSong(status=status))
 
@@ -361,11 +372,11 @@ class MainWidget(QWidget):
         if not self.isPlaying:
             self.songPlayer.play()
             self.Playing.setText(f"Playing: {self.chosenSong.removesuffix(".mp3")}")
-            self.togglePlayback.setText("|>")
+            self.togglePlayback.setText("||")
         elif self.isPlaying:
             self.songPlayer.pause()
             self.Playing.setText(f"Paused: {self.chosenSong.removesuffix(".mp3")}")
-            self.togglePlayback.setText("||")
+            self.togglePlayback.setText("|>")
             
         self.isPlaying = not self.isPlaying
              
@@ -380,12 +391,11 @@ class MainWidget(QWidget):
         self.timePlaying.setText(liveTime)
         
     def seekSlider(self):
-        if not self.isPlaying:
-            return
         seeked = self.musicSlider.value()
         self.songPlayer.pause()
         self.songPlayer.setPosition(seeked)
-        self.songPlayer.play()
+        if self.isPlaying:
+            self.songPlayer.play()
              
     def create_playlist(self):
         self.CreatePlaylistWindow = CreatePlaylistWidget([])
@@ -403,6 +413,9 @@ class MainWidget(QWidget):
         
     def add_song(self):
         currentPlaylist = self.choosePlaylist.currentText()
+        if currentPlaylist == "":
+            self.warningLabel.setText("Please create a playlist!")
+            return
         fullpath = os.path.join("playlists",currentPlaylist)
         self.AddSongWindow = AddSongsWidget(currentPlaylist)
         self.AddSongWindow.exec()
@@ -411,7 +424,7 @@ class MainWidget(QWidget):
             return
         self.threadpool = QThreadPool()
         worker = DownloadSongs(songs, fullpath)
-        worker.signals.progress.connect(lambda val: self.updateWarning(val, songs))
+        worker.signals.progress.connect(lambda val: self.updateWarning(val, songs, currentPlaylist))
         worker.signals.error.connect(lambda song: self.errorLabel.setText(f"Couldn't download\n\"{song}\""))
         worker.signals.finished.connect(self.finishWarning)
         worker.signals.starting.connect(lambda: self.warningLabel.setText("Starting download/s..."))
@@ -419,8 +432,9 @@ class MainWidget(QWidget):
         self.finished = False
         self.threadpool.start(worker)
         
-    def updateWarning(self, val, songs):
-        self.warningLabel.setText(f"Downloaded {val+1}/{len(songs)} songs...")
+    def updateWarning(self, val, songs, currentPlaylist):
+        self.warningLabel.setText(f"Downloaded {val}/{len(songs)} songs...")
+        self.update_song_list(currentPlaylist)
     
     def finishWarning(self, val):
         self.warningLabel.setText(f"Finished Downloading {val} songs!")
@@ -441,7 +455,8 @@ class MainWidget(QWidget):
         songs = [song for song in os.listdir(os.path.join("playlists", playlist)) if song.endswith(".mp3")]
         self.playlistView.clear()
         self.playlistView.addItems(songs)
-        
+        if songs != []:
+            self.playlistView.setCurrentRow(0)
         
     def delete_item(self, str):
         self.warningLabel.setText("")
@@ -464,7 +479,6 @@ class MainWidget(QWidget):
                 os.remove(fullpath)
         else:
             return
-        
         self.update_playlists()
         
         
