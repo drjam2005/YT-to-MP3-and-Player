@@ -1,6 +1,6 @@
 # YT to MP3 and player
 
-This app utilizes the `yt_dlp` API to extract and download youtube videos into mp3s and store them locally
+This app utilizes the `yt_dlp` to extract and download youtube videos into mp3s and store them locally
 
 
 
