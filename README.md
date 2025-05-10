@@ -12,10 +12,7 @@ This app utilizes `yt_dlp` to extract, download, and conert youtube videos into 
 - **MP3 player**:
   well, mp3 player
 
-## Dependencies (for exe)
-- nothing
-
-## Dependencies (for source code)
+## Dependencies
 - yt_dlp
 - ttkbootstrap
 - tkinter
